@@ -13,10 +13,18 @@ data LispVal = Atom String
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
+escapedCharSet :: [Char]
+escapedCharSet = "tn\\\"\'f"
+
+escapedChar :: Parser Char
+escapedChar = do
+    char '\\'
+    oneOf escapedCharSet
+
 parseString :: Parser LispVal
 parseString = do
     char '"'
-    x <- many (noneOf "\"")
+    x <- many (noneOf escapedCharSet <|> escapedChar)
     char '"'
     return $ String x
 
@@ -43,10 +51,11 @@ parseNumber = many1 digit >>= return . Number . read
 spaces :: Parser ()
 spaces = skipMany1 space
 
+
+parseExpr :: Parser LispVal
+parseExpr = parseAtom <|> parseString <|> parseNumber
+
 readExpr :: String -> String
-readExpr input = case parse (spaces >> symbol) "lisp" input of
+readExpr input = case parse parseExpr "lisp" input of
     Left  err -> "No match: " ++ show err
     Right val -> "Found value"
-
-someFunc :: IO ()
-someFunc = putStrLn "someFunc"
