@@ -13,24 +13,21 @@ data LispVal = Atom String
 symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
-escapedCharSet :: [Char]
-escapedCharSet = "tn\\\"fr"
-
 escapedChar :: Parser Char
 escapedChar = do
     char '\\'
-    c <- oneOf escapedCharSet
+    c <- oneOf "\\\"fnrt"
     return $ case c of
-        't'   -> '\t'
-        'n'   -> '\n'
         'f'   -> '\f'
+        'n'   -> '\n'
         'r'   -> '\r'
+        't'   -> '\t'
         other -> other
 
 parseString :: Parser LispVal
 parseString = do
     char '"'
-    x <- many (escapedChar <|> anyChar)
+    x <- many $ escapedChar <|> noneOf "\\\""
     char '"'
     return $ String x
 
@@ -57,9 +54,10 @@ parseNumber = many1 digit >>= return . Number . read
 spaces :: Parser ()
 spaces = skipMany1 space
 
-
 parseExpr :: Parser LispVal
-parseExpr = parseAtom <|> parseString <|> parseNumber
+parseExpr = parseAtom 
+    <|> parseString
+    <|> parseNumber 
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
