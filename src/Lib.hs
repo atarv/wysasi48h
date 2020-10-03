@@ -14,17 +14,23 @@ symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
 escapedCharSet :: [Char]
-escapedCharSet = "tn\\\"\'f"
+escapedCharSet = "tn\\\"fr"
 
 escapedChar :: Parser Char
 escapedChar = do
     char '\\'
-    oneOf escapedCharSet
+    c <- oneOf escapedCharSet
+    return $ case c of
+        't'   -> '\t'
+        'n'   -> '\n'
+        'f'   -> '\f'
+        'r'   -> '\r'
+        other -> other
 
 parseString :: Parser LispVal
 parseString = do
     char '"'
-    x <- many (noneOf escapedCharSet <|> escapedChar)
+    x <- many (escapedChar <|> anyChar)
     char '"'
     return $ String x
 
