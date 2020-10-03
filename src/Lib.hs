@@ -1,7 +1,9 @@
 module Lib where
 import           Text.ParserCombinators.Parsec
-                                         hiding ( spaces )
-import           Control.Monad                  ( liftM )
+                                         hiding (spaces)
+import           Control.Monad                  (liftM)
+import Numeric (readOct, readHex, readDec, readInt)
+import qualified Data.Char as Char
 
 data LispVal = Atom String
              | List [LispVal]
@@ -9,9 +11,11 @@ data LispVal = Atom String
              | Number Integer
              | String String
              | Bool Bool
+             | Character Char
+             deriving (Show)
 
 symbol :: Parser Char
-symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
+symbol = oneOf "!$%&|*+-/:<=>?@^_~"
 
 escapedChar :: Parser Char
 escapedChar = do
@@ -31,25 +35,55 @@ parseString = do
     char '"'
     return $ String x
 
+parseCharacter :: Parser LispVal
+parseCharacter = do
+    try $ string "#\\"
+    value <- try (string "space" <|> string "newline") 
+        <|> do
+            x <- anyChar
+            notFollowedBy alphaNum
+            return [x]
+    space
+    return $ Character $ case map Char.toLower value of
+        "space" -> ' '
+        "newline" -> '\n'
+        [x] -> x
+
 parseAtom :: Parser LispVal
 parseAtom = do
     first <- letter <|> symbol
     rest  <- many (letter <|> digit <|> symbol)
-    let atom = first : rest
-    return $ case atom of
-        "#t" -> Bool True
-        "#f" -> Bool False
-        _    -> Atom atom
+    return . Atom $ first : rest
+
+parseBool :: Parser LispVal
+parseBool = do
+    char '#'
+    (char 't' >> (return $ Bool True)) <|> (char 'f' >> (return $ Bool False))
 
 parseNumber :: Parser LispVal
--- parseNumber = liftM (Number . read) $ many1 digit
--- ex 1.1 do notation
--- parseNumber = do
---     digits <- many1 digit
---     return $ Number . read $ digits
--- ex 1.2 bind
-parseNumber = many1 digit >>= return . Number . read
-
+parseNumber =
+    base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
+  where            
+    binary = do
+        try $ string "#b"
+        binaryDigits <- many1 $ oneOf "01"
+        let readBin = readInt 2 (\c -> c == '0' || c == '1') (\i -> read [i])
+            [(result, _)] = readBin binaryDigits
+        return $ Number result
+    octal = do
+        try $ string "#o"
+        octalDigits <- many1 octDigit
+        let [(result, _)] = readOct octalDigits
+        return $ Number $ result
+    base10 = many1 digit >>= return . Number . read
+    base10Explicit = do
+        try $ string "#d"
+        base10
+    hexadecimal = do
+        try $ string "#x"
+        hexDigits <- many1 hexDigit
+        let [(result, _)] = readHex hexDigits
+        return $ Number $ result
 
 spaces :: Parser ()
 spaces = skipMany1 space
@@ -58,8 +92,10 @@ parseExpr :: Parser LispVal
 parseExpr = parseAtom 
     <|> parseString
     <|> parseNumber 
+    <|> parseCharacter
+    <|> parseBool
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
     Left  err -> "No match: " ++ show err
-    Right val -> "Found value"
+    Right val -> "Found value: " <> show val
