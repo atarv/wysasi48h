@@ -60,4 +60,5 @@ test-suite write-yourself-a-scheme-test
   build-depends:
       base >=4.7 && <5
     , write-yourself-a-scheme
+    , hspec
   default-language: Haskell2010
