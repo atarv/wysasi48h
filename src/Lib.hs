@@ -183,22 +183,62 @@ apply func args = maybe (Bool False) ($ args) $ lookup func primitives
 
 primitives :: [(String, [LispVal] -> LispVal)]
 primitives =
-    [ ("+"        , numericBinOp (+))
-    , ("-"        , numericBinOp (-))
-    , ("*"        , numericBinOp (*))
-    , ("/"        , numericBinOp div)
-    , ("mod"      , numericBinOp mod)
-    , ("quotient" , numericBinOp quot)
-    , ("remainder", numericBinOp rem)
-    ]
+    [
+    -- Integer arithmetic
+      ("+"       , numericBinOp (+))
+    , ("-"       , numericBinOp (-))
+    , ("*"       , numericBinOp (*))
+    , ("/"       , numericBinOp div)
+    , ("mod"     , numericBinOp mod)
+    , ("quotient", numericBinOp quot)
+    , ( "remainder"
+      , numericBinOp rem
+      )
 
-numericBinOp :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
-numericBinOp op params = Number $ foldl1 op $ map unpackNum params
+    -- Type testing
+    , ("number?" , unaryOp isNumber)
+    , ("string?" , unaryOp isString)
+    , ("list?"   , unaryOp isList)
+    , ("boolean?", unaryOp isBoolean)
+    , ("char?"   , unaryOp isChar)
+    , ("symbol?" , unaryOp isSymbol)
+    ]
+  where
+    numericBinOp :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+    numericBinOp op params = Number $ foldl1 op $ map unpackNum params
+
+    unaryOp :: (LispVal -> LispVal) -> [LispVal] -> LispVal
+    unaryOp f [x] = f x
+
+isNumber :: LispVal -> LispVal
+isNumber (Number _) = Bool True
+isNumber _          = Bool False
+
+isString :: LispVal -> LispVal
+isString (String _) = Bool True
+isString _          = Bool False
+
+isList :: LispVal -> LispVal
+isList (List _) = Bool True
+isList _        = Bool False
+
+isBoolean :: LispVal -> LispVal
+isBoolean (Bool _) = Bool True
+isBoolean _        = Bool False
+
+isChar :: LispVal -> LispVal
+isChar (Character _) = Bool True
+isChar _             = Bool False
+
+isSymbol :: LispVal -> LispVal
+isSymbol (Atom _) = Bool True -- are other values than atoms symbols?
+isSymbol _        = Bool False
 
 unpackNum :: LispVal -> Integer
 unpackNum (Number n) = n
-unpackNum (String s) = case readMaybe s of
-    Just x  -> x
-    Nothing -> 0
-unpackNum (List [x]) = unpackNum x
+-- -- conversion from other types
+-- unpackNum (String s) = case readMaybe s of
+--     Just x  -> x
+--     Nothing -> 0
+-- unpackNum (List [x]) = unpackNum x
 unpackNum _          = 0
