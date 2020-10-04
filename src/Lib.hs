@@ -1,4 +1,10 @@
-module Lib where
+module Lib
+    ( readLispVal
+    , readExpr
+    , LispVal(..)
+    )
+where
+
 import           Text.ParserCombinators.Parsec
                                          hiding ( spaces )
 import           Control.Monad                  ( liftM )
@@ -8,6 +14,7 @@ import           Numeric                        ( readOct
                                                 , readInt
                                                 )
 import qualified Data.Char                     as Char
+import           Data.List                      ( intercalate )
 
 data LispVal = Atom String
              | List [LispVal]
@@ -16,7 +23,20 @@ data LispVal = Atom String
              | String String
              | Bool Bool
              | Character Char
-             deriving (Show)
+
+instance Show LispVal where
+    show (String    content) = mconcat ["\"", content, "\""]
+    show (Atom      name   ) = name
+    show (Number    n      ) = show n
+    show (Bool      True   ) = "#t"
+    show (Bool      False  ) = "#f"
+    show (List      xs     ) = "(" <> unwordsList xs <> ")"
+    show (Character c      ) = "#\\" <> [c]
+    show (DottedList head tail) =
+        "(" <> unwordsList head <> " . " <> show tail <> ")"
+
+unwordsList :: [LispVal] -> String
+unwordsList = intercalate " " . fmap show
 
 symbol :: Parser Char
 symbol = oneOf "!$%&|*+-/:<=>?@^_~"
@@ -142,7 +162,7 @@ parseExpr =
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
-    Left  err -> "No match: " ++ show err
+    Left  err -> "No match: " <> show err
     Right val -> "Found value: " <> show val
 
 readLispVal :: String -> Either ParseError LispVal

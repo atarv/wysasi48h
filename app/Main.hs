@@ -7,5 +7,5 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 main :: IO ()
 main = do
     (expr : _) <- getArgs
-    putStrLn expr
+    putStrLn $ "Input: " <> expr
     putStrLn $ readExpr expr
