@@ -86,12 +86,37 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         let [(result, _)] = readHex hexDigits
         return $ Number $ result
 
+parseList :: Parser LispVal
+parseList = liftM List $ sepBy parseExpr spaces
+
+parseDottedList :: Parser LispVal
+parseDottedList = do
+    head <- endBy parseExpr spaces
+    tail <- char '.' >> spaces >> parseExpr
+    return $ DottedList head tail
+
+parseQuoted :: Parser LispVal
+parseQuoted = do
+    char '\''
+    x <- parseExpr
+    return $ List [Atom "quote", x]
+
 spaces :: Parser ()
 spaces = skipMany1 space
 
 parseExpr :: Parser LispVal
 parseExpr =
-    parseAtom <|> parseString <|> parseNumber <|> parseCharacter <|> parseBool
+    parseAtom
+        <|> parseString
+        <|> parseNumber
+        <|> parseCharacter
+        <|> parseQuoted
+        <|> parseBool
+        <|> do
+                char '('
+                x <- try parseList <|> parseDottedList
+                char ')'
+                return x
 
 readExpr :: String -> String
 readExpr input = case parse parseExpr "lisp" input of
