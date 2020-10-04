@@ -2,6 +2,7 @@ module Lib
     ( readLispVal
     , readExpr
     , LispVal(..)
+    , eval
     )
 where
 
@@ -14,6 +15,7 @@ import           Numeric                        ( readOct
                                                 , readInt
                                                 )
 import qualified Data.Char                     as Char
+import           Text.Read                      ( readMaybe )
 import           Data.List                      ( intercalate )
 
 data LispVal = Atom String
@@ -160,10 +162,43 @@ parseExpr =
                 char ')'
                 return x
 
-readExpr :: String -> String
+readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
-    Left  err -> "No match: " <> show err
-    Right val -> "Found value: " <> show val
+    Left  err -> String $ "No match: " <> show err
+    Right val -> val
 
 readLispVal :: String -> Either ParseError LispVal
 readLispVal input = parse parseExpr "lisp" input
+
+eval :: LispVal -> LispVal
+eval val@(String    _                  ) = val
+eval val@(Number    _                  ) = val
+eval val@(Bool      _                  ) = val
+eval val@(Character _                  ) = val
+eval (    List      [Atom "quote", val]) = val
+eval (    List      (Atom func : args) ) = apply func $ map eval args
+
+apply :: String -> [LispVal] -> LispVal
+apply func args = maybe (Bool False) ($ args) $ lookup func primitives
+
+primitives :: [(String, [LispVal] -> LispVal)]
+primitives =
+    [ ("+"        , numericBinOp (+))
+    , ("-"        , numericBinOp (-))
+    , ("*"        , numericBinOp (*))
+    , ("/"        , numericBinOp div)
+    , ("mod"      , numericBinOp mod)
+    , ("quotient" , numericBinOp quot)
+    , ("remainder", numericBinOp rem)
+    ]
+
+numericBinOp :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+numericBinOp op params = Number $ foldl1 op $ map unpackNum params
+
+unpackNum :: LispVal -> Integer
+unpackNum (Number n) = n
+unpackNum (String s) = case readMaybe s of
+    Just x  -> x
+    Nothing -> 0
+unpackNum (List [x]) = unpackNum x
+unpackNum _          = 0
