@@ -2,18 +2,22 @@ module PrimitivesSpec where
 
 import           Lib
 import           Test.Hspec
-import           Data.Either
 
-primitivesSpec = parallel $ do
+-- Shorthand for reading and evaluating expressions
+readEval :: String -> Either LispError LispVal
+readEval expr = readExpr expr >>= eval
+
+primitivesSpec = parallel $
     describe "+ operation" $ do
-        it "should work with only one argument"
-            $ shouldBe True
-            $ case eval $ readExpr "(+ 9)" of
-                  Number 9 -> True
-                  _        -> False
+        it "should throw error if arguments are missing"
+            $ shouldBe False
+            $ case readEval "(+ 9)" of
+                Right _ -> True
+                Left (NumArgs 2 _) -> False
+
         it "should work with multiple arguments"
             $ shouldBe True
-            $ case eval $ readExpr "(+ 1 2 3 4 5 6)" of
-                  Number 21 -> True
+            $ case readEval "(+ 1 2 3 4 5 6)" of
+                  Right (Number 21) -> True
                   _        -> False
 

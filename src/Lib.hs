@@ -2,6 +2,7 @@ module Lib
     ( readLispVal
     , readExpr
     , LispVal(..)
+    , LispError(..)
     , eval
     , extractValue
     , trapError
@@ -10,9 +11,7 @@ where
 
 import           Text.ParserCombinators.Parsec
                                          hiding ( spaces )
-import           Control.Monad                  ( liftM
-                                                , liftM2
-                                                )
+import           Control.Monad                  ( liftM2 )
 import           Control.Monad.Except           ( MonadError()
                                                 , throwError
                                                 , catchError
@@ -22,7 +21,6 @@ import           Numeric                        ( readOct
                                                 , readInt
                                                 )
 import qualified Data.Char                     as Char
-import           Data.List                      ( intercalate )
 
 data LispVal = Atom String
              | List [LispVal]
@@ -68,7 +66,7 @@ instance Show LispError where
 type ThrowsError = Either LispError
 
 unwordsList :: [LispVal] -> String
-unwordsList = intercalate " " . fmap show
+unwordsList = unwords . fmap show
 
 symbol :: Parser Char
 symbol = oneOf "!$%&|*+-/:<=>?@^_~"
@@ -112,7 +110,7 @@ parseAtom = do
 parseBool :: Parser LispVal
 parseBool = do
     char '#'
-    (char 't' >> (return $ Bool True)) <|> (char 'f' >> (return $ Bool False))
+    (char 't' >> return (Bool True)) <|> (char 'f' >> return (Bool False))
 
 parseNumber :: Parser LispVal
 parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
@@ -127,8 +125,8 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         try $ string "#o"
         octalDigits <- many1 octDigit
         let [(result, _)] = readOct octalDigits
-        return $ Number $ result
-    base10         = many1 digit >>= return . Number . read
+        return $ Number result
+    base10         = Number . read <$>  many1 digit
     base10Explicit = do
         try $ string "#d"
         base10
@@ -136,10 +134,10 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         try $ string "#x"
         hexDigits <- many1 hexDigit
         let [(result, _)] = readHex hexDigits
-        return $ Number $ result
+        return $ Number result
 
 parseList :: Parser LispVal
-parseList = liftM List $ sepBy parseExpr spaces
+parseList = List <$> sepBy parseExpr spaces
 
 parseDottedList :: Parser LispVal
 parseDottedList = do
@@ -206,7 +204,7 @@ readExpr input = case parse parseExpr "lisp" input of
     Right val -> return val
 
 readLispVal :: String -> Either ParseError LispVal
-readLispVal input = parse parseExpr "lisp" input
+readLispVal = parse parseExpr "lisp"
 
 eval :: LispVal -> ThrowsError LispVal
 eval val@(String    _                  ) = return val
@@ -277,7 +275,7 @@ numericBinOp
     :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
 numericBinOp _ [] = throwError $ NumArgs 2 []
 numericBinOp _ singleArg@[_] = throwError $ NumArgs 2 singleArg
-numericBinOp op args = mapM unpackNum args >>= return . Number . foldl1 op
+numericBinOp op args =  Number . foldl1 op <$> mapM unpackNum args
 
 unaryOp :: (LispVal -> LispVal) -> [LispVal] -> ThrowsError LispVal
 unaryOp op [x]  = return $ op x
@@ -291,7 +289,7 @@ boolBinOp
     -> ThrowsError LispVal
 boolBinOp unpacker op [left, right] =
     -- Unpack arguments and apply supplied operation on them
-    liftM2 op (unpacker left) (unpacker right) >>= return . Bool
+    Bool <$> liftM2 op (unpacker left) (unpacker right)
 boolBinOp _ _ args = throwError $ NumArgs 2 args
 
 boolBoolBinOp :: (Bool -> Bool -> Bool) -> [LispVal] -> ThrowsError LispVal
@@ -341,7 +339,7 @@ unpackNum string@(String n) =
     let parsed = reads n
     in  if null parsed
             then throwError $ TypeMismatch "number" string
-            else return $ fst $ parsed !! 0
+            else return $ fst $ head parsed
 unpackNum (List [x]) = unpackNum x
 unpackNum notNum     = throwError $ TypeMismatch "number" notNum
 

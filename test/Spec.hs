@@ -1,6 +1,4 @@
-import           Lib
 import           Test.Hspec
-import           Data.Either
 import           ParserSpec                     ( parserSpec )
 import           PrimitivesSpec                 ( primitivesSpec )
 
