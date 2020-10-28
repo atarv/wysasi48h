@@ -35,7 +35,7 @@ parserSpec = parallel $ do
         it "should not parse strings with missing delimiter"
             $ expect False
             $ case readLispVal "\"" of
-                  Right (String s) -> True
+                  Right (String _) -> True
                   _                -> False
     describe "readLispVal : Character" $ do
         it "should parse named newline"

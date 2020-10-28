@@ -43,5 +43,68 @@ primitivesSpec = parallel $ do
             $ case readEval "(= 0 1)" of
                   Right (Bool b) -> b
                   _              -> True
-
-
+    describe "if-clause " $ do
+        it "should evaluate second argument if condition is true"
+            $ expect 2
+            $ case readEval "(if (< 2 3) (+ 1 1) 0)" of
+                  Right (Number n) -> n
+                  _                -> -1
+        it "should evaluate third argument if condition is false"
+            $ expect 0
+            $ case readEval "(if (> 2 3) (+ 1 1) 0)" of
+                  Right (Number n) -> n
+                  _                -> -1
+    describe "list primitives - car" $ do
+        it "should pick the first argument of a list"
+            $ expect 1
+            $ case readEval "(car '(1 2 3))" of
+                  Right (Number n) -> n
+                  _                -> -1
+        it "should work on lists with only one element"
+            $ expect 9
+            $ case readEval "(car '(9))" of
+                  Right (Number n) -> n
+                  _                -> -1
+        it "should throw an error on non list argument"
+            $ expect "pair"
+            $ case readEval "(car '1)" of
+                  Right _                  -> ""
+                  Left  (TypeMismatch t _) -> t
+    describe "list primitives - cdr" $ do
+        it "should pick the rest/tail argument of a list"
+            $ expect [2, 3]
+            $ case readEval "(cdr '(1 2 3))" of
+                  Right (List [Number a, Number b]) -> [a, b]
+                  _ -> []
+        it "should return nil on list of one element"
+            $ expect True
+            $ case readEval "(cdr '(9))" of
+                  Right (List []) -> True
+                  _               -> False
+        it "should throw an error on non list argument"
+            $ expect "pair"
+            $ case readEval "(cdr '1)" of
+                  Right _                  -> ""
+                  Left  (TypeMismatch t _) -> t
+    describe "list primitives - cons" $ do
+        it "should construct a one element list from one element and nil"
+            $ expect [1]
+            $ case readEval "(cons 1 '())" of
+                  Right (List [Number n]) -> [n]
+                  _                       -> []
+        it "should prepend first argument to the list as second argument"
+            $ expect [1, 2]
+            $ case readEval "(cons 1 '(2))" of
+                  Right (List [Number a, Number b]) -> [a, b]
+                  _ -> []
+        it "should prepend first argument to the head of a dotted list"
+            $ expect ([1, 2], 3)
+            $ case readEval "(cons 1 '(2 . 3))" of
+                  Right (DottedList [Number a, Number b] (Number c)) ->
+                      ([a, b], c)
+                  _ -> ([], 0)
+        it "should form a dotted list of two non-list arguments"
+            $ expect (['a'], 'b')
+            $ case readEval "(cons #\\a #\\b)" of
+                  Right (DottedList [Character a] (Character b)) -> ([a], b)
+                  _ -> ([], '\0')

@@ -126,7 +126,7 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         octalDigits <- many1 octDigit
         let [(result, _)] = readOct octalDigits
         return $ Number result
-    base10         = Number . read <$>  many1 digit
+    base10         = Number . read <$> many1 digit
     base10Explicit = do
         try $ string "#d"
         base10
@@ -207,12 +207,17 @@ readLispVal :: String -> Either ParseError LispVal
 readLispVal = parse parseExpr "lisp"
 
 eval :: LispVal -> ThrowsError LispVal
-eval val@(String    _                  ) = return val
-eval val@(Number    _                  ) = return val
-eval val@(Bool      _                  ) = return val
-eval val@(Character _                  ) = return val
-eval (    List      [Atom "quote", val]) = return val
-eval (    List      (Atom func : args) ) = mapM eval args >>= apply func
+eval val@(String    _) = return val
+eval val@(Number    _) = return val
+eval val@(Bool      _) = return val
+eval val@(Character _) = return val
+eval (List [Atom "if", predicate, consequence, alternative]) = do
+    result <- eval predicate
+    case result of
+        Bool False -> eval alternative
+        _          -> eval consequence
+eval (List [Atom "quote", val]) = return val
+eval (List (Atom func : args)) = mapM eval args >>= apply func
 eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
 apply :: String -> [LispVal] -> ThrowsError LispVal
@@ -268,14 +273,21 @@ primitives =
 
     -- Logic operators
     , ("&&", boolBoolBinOp (&&))
-    , ("||", boolBoolBinOp (||))
+    , ( "||"
+      , boolBoolBinOp (||)
+      )
+
+    -- List primitives
+    , ("car" , car)
+    , ("cdr" , cdr)
+    , ("cons", cons)
     ]
 
 numericBinOp
     :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
-numericBinOp _ [] = throwError $ NumArgs 2 []
-numericBinOp _ singleArg@[_] = throwError $ NumArgs 2 singleArg
-numericBinOp op args =  Number . foldl1 op <$> mapM unpackNum args
+numericBinOp _  []            = throwError $ NumArgs 2 []
+numericBinOp _  singleArg@[_] = throwError $ NumArgs 2 singleArg
+numericBinOp op args          = Number . foldl1 op <$> mapM unpackNum args
 
 unaryOp :: (LispVal -> LispVal) -> [LispVal] -> ThrowsError LispVal
 unaryOp op [x]  = return $ op x
@@ -350,3 +362,23 @@ unpackBool notBool  = throwError $ TypeMismatch "boolean" notBool
 unpackStr :: LispVal -> ThrowsError String
 unpackStr (String s) = return s
 unpackStr notStr     = throwError $ TypeMismatch "string" notStr
+
+car :: [LispVal] -> ThrowsError LispVal
+car [List (x : _)        ] = return x
+car [DottedList (x : _) _] = return x
+car [badArg              ] = throwError $ TypeMismatch "pair" badArg
+car badArgList             = throwError $ NumArgs 1 badArgList
+
+cdr :: [LispVal] -> ThrowsError LispVal
+cdr [List (_ : xs)        ] = return $ List xs
+cdr [DottedList [_     ] x] = return $ DottedList [] x
+cdr [DottedList (_ : xs) x] = return $ DottedList xs x
+cdr [badArg               ] = throwError $ TypeMismatch "pair" badArg
+cdr badArgList              = throwError $ NumArgs 1 badArgList
+
+cons :: [LispVal] -> ThrowsError LispVal
+cons [x , List []            ] = return $ List [x]
+cons [x , List xs            ] = return $ List $ x : xs
+cons [x , DottedList xs xlast] = return $ DottedList (x : xs) xlast
+cons [x1, x2                 ] = return $ DottedList [x1] x2
+cons badArgList                = throwError $ NumArgs 2 badArgList
