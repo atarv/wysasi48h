@@ -108,3 +108,41 @@ primitivesSpec = parallel $ do
             $ case readEval "(cons #\\a #\\b)" of
                   Right (DottedList [Character a] (Character b)) -> ([a], b)
                   _ -> ([], '\0')
+    describe "equvality tests - eqv?, eq?" $ do
+        -- testing only `eqv?` since it shares the same implementation as `eq?` 
+        it "should successfully evaluate booleans (trues)"
+            $ expect True
+            $ case readEval "(eqv? #t #t)" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should successfully evaluate boolean falses"
+            $ expect True
+            $ case readEval "(eqv? #f #f)" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should successfully evaluate unequal booleans"
+            $ expect False
+            $ case readEval "(eqv? #t #f)" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should successfully compare equivalence of lists"
+            $ expect True
+            $ case
+                  readEval
+                      "(eqv? '(1 \"ok\" '(#\\a #\\b)) '(1 \"ok\" '(#\\a #\\b)))"
+              of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should successfully compare unequivalence of lists"
+            $ expect False
+            $ case
+                  readEval
+                      "(eqv? '(1 \"ok\" '(#\\a #\\b)) '(1 \"ok\" '(#\\a #\\c)))"
+              of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should successfully compare equivalence of dotted lists"
+            $ expect True
+            $ case readEval "(eqv? '(1 2 . #\\w) '(1 2 . #\\w))" of
+                  Right (Bool b) -> b
+                  _              -> False

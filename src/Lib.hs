@@ -267,8 +267,10 @@ primitives =
     , ("string<?" , strBoolBinOp (<))
     , ("string>?" , strBoolBinOp (>))
     , ("string<=?", strBoolBinOp (<=))
-    , ( "string>=?"
-      , strBoolBinOp (>=)
+    , ("string>=?", strBoolBinOp (>=))
+    , ("eqv?"     , eqv)
+    , ( "eq?"
+      , eqv
       )
 
     -- Logic operators
@@ -347,10 +349,10 @@ numBoolBinOp = boolBinOp unpackNum
 
 unpackNum :: LispVal -> ThrowsError Integer
 unpackNum (Number n) = return n
-unpackNum string@(String n) =
+unpackNum s@(String n) =
     let parsed = reads n
     in  if null parsed
-            then throwError $ TypeMismatch "number" string
+            then throwError $ TypeMismatch "number" s
             else return $ fst $ head parsed
 unpackNum (List [x]) = unpackNum x
 unpackNum notNum     = throwError $ TypeMismatch "number" notNum
@@ -382,3 +384,19 @@ cons [x , List xs            ] = return $ List $ x : xs
 cons [x , DottedList xs xlast] = return $ DottedList (x : xs) xlast
 cons [x1, x2                 ] = return $ DottedList [x1] x2
 cons badArgList                = throwError $ NumArgs 2 badArgList
+
+eqv :: [LispVal] -> ThrowsError LispVal
+eqv [(Bool      a), (Bool b)     ] = return $ Bool $ a == b
+eqv [(Number    a), (Number b)   ] = return $ Bool $ a == b
+eqv [(String    a), (String b)   ] = return $ Bool $ a == b
+eqv [(Character a), (Character b)] = return $ Bool $ a == b
+eqv [(Atom      a), (Atom b)     ] = return $ Bool $ a == b
+eqv [(DottedList xs x), (DottedList ys y)] =
+    eqv [List $ xs ++ [x], List $ ys ++ [y]]
+eqv [(List xs), (List ys)] =
+    return
+        $  Bool
+        $  (length xs == length ys)
+        && (all (\(Right (Bool b)) -> b) $ zipWith (\x y -> eqv [x, y]) xs ys)
+eqv [_, _]     = return $ Bool False
+eqv badArgList = throwError $ NumArgs 2 badArgList
