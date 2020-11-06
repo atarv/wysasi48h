@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification #-}
 module Lib
     ( readLispVal
     , readExpr
@@ -11,7 +12,9 @@ where
 
 import           Text.ParserCombinators.Parsec
                                          hiding ( spaces )
-import           Control.Monad                  ( liftM2 )
+import           Control.Monad                  ( liftM
+                                                , liftM2
+                                                )
 import           Control.Monad.Except           ( MonadError()
                                                 , throwError
                                                 , catchError
@@ -64,6 +67,8 @@ instance Show LispError where
     show (NotFunction    message func   ) = message <> ": " <> show func
 
 type ThrowsError = Either LispError
+
+data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
 
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . fmap show
@@ -215,7 +220,8 @@ eval (List [Atom "if", predicate, consequence, alternative]) = do
     result <- eval predicate
     case result of
         Bool False -> eval alternative
-        _          -> eval consequence
+        Bool True  -> eval consequence
+        badArg     -> throwError $ TypeMismatch "boolean" badArg
 eval (List [Atom "quote", val]) = return val
 eval (List (Atom func : args)) = mapM eval args >>= apply func
 eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
@@ -269,8 +275,9 @@ primitives =
     , ("string<=?", strBoolBinOp (<=))
     , ("string>=?", strBoolBinOp (>=))
     , ("eqv?"     , eqv)
-    , ( "eq?"
-      , eqv
+    , ("eq?"      , eqv)
+    , ( "equal?"
+      , equal
       )
 
     -- Logic operators
@@ -358,8 +365,12 @@ unpackNum (List [x]) = unpackNum x
 unpackNum notNum     = throwError $ TypeMismatch "number" notNum
 
 unpackBool :: LispVal -> ThrowsError Bool
-unpackBool (Bool b) = return b
-unpackBool notBool  = throwError $ TypeMismatch "boolean" notBool
+unpackBool (    Bool   b) = return b
+unpackBool arg@(String s) = case s of
+    "#t" -> return True
+    "#f" -> return False
+    _    -> throwError $ TypeMismatch "boolean" arg
+unpackBool notBool = throwError $ TypeMismatch "boolean" notBool
 
 unpackStr :: LispVal -> ThrowsError String
 unpackStr (String s) = return s
@@ -400,3 +411,26 @@ eqv [(List xs), (List ys)] =
         && (all (\(Right (Bool b)) -> b) $ zipWith (\x y -> eqv [x, y]) xs ys)
 eqv [_, _]     = return $ Bool False
 eqv badArgList = throwError $ NumArgs 2 badArgList
+
+equal :: [LispVal] -> ThrowsError LispVal
+equal [List [], List []] = return $ Bool True
+equal [List xs, List ys] = do
+    let unLispBool (Bool b) = b
+        bools = zipWith (\x y -> unLispBool <$> equal [x, y]) xs ys
+    Bool <$> foldl1 (liftM2 (&&)) bools
+equal [DottedList xs x, DottedList ys y] = Bool <$> liftM2
+    (&&)
+    (unLispBool <$> equal (List <$> [xs, ys]))
+    (unLispBool <$> equal [x, y])
+    where unLispBool (Bool b) = b
+equal args@[a, b] = do
+    primitiveEquals <- liftM or $ mapM
+        (unpackEquals a b)
+        [AnyUnpacker unpackBool, AnyUnpacker unpackNum, AnyUnpacker unpackStr]
+    eqvEquals <- eqv args
+    return $ Bool $ (primitiveEquals || let (Bool x) = eqvEquals in x)
+equal badArgs = throwError $ NumArgs 2 badArgs
+
+unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
+unpackEquals x y (AnyUnpacker unpacker) =
+    liftM2 (==) (unpacker x) (unpacker y) `catchError` (const $ return False)

@@ -108,7 +108,7 @@ primitivesSpec = parallel $ do
             $ case readEval "(cons #\\a #\\b)" of
                   Right (DottedList [Character a] (Character b)) -> ([a], b)
                   _ -> ([], '\0')
-    describe "equvality tests - eqv?, eq?" $ do
+    describe "equality tests (strict) - eqv?, eq?" $ do
         -- testing only `eqv?` since it shares the same implementation as `eq?` 
         it "should successfully evaluate booleans (trues)"
             $ expect True
@@ -146,3 +146,35 @@ primitivesSpec = parallel $ do
             $ case readEval "(eqv? '(1 2 . #\\w) '(1 2 . #\\w))" of
                   Right (Bool b) -> b
                   _              -> False
+    describe "loose equality test - equal?" $ do
+        it "should consider numbers that convert to same string as equals"
+            $ expect True
+            $ case readEval "(equal? \"2\" 2)" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should consider unequal values unequal even after conversion"
+            $ expect False
+            $ case readEval "(equal? \"2\" 0)" of
+                  Right (Bool b) -> b
+                  _              -> True
+        it "should consider booleans that convert to same string as equals"
+            $ expect True
+            $ case readEval "(equal? \"#f\" #f)" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should work on lists"
+            $ expect True
+            $ case readEval "(equal? '(1 2 3) '(1 2 \"3\"))" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should work on equal nested lists"
+            $ expect True
+            $ case readEval "(equal? '(\"#t\" 2 '(3 3)) '(#t 2 '(\"3\" 3)))" of
+                  Right (Bool b) -> b
+                  _              -> False
+        it "should work on unequal nested lists"
+            $ expect False
+            $ case readEval "(equal? '(1 2 '(3 3)) '(1 2 '(\"4\" 3)))" of
+                  Right (Bool b) -> b
+                  _              -> True
+
