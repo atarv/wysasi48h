@@ -177,4 +177,32 @@ primitivesSpec = parallel $ do
             $ case readEval "(equal? '(1 2 '(3 3)) '(1 2 '(\"4\" 3)))" of
                   Right (Bool b) -> b
                   _              -> True
-
+    describe "condition expression -  cond" $ do
+        it "should evaluate first true clause"
+            $ expect "this"
+            $ case
+                  readEval
+                  $  "(cond '((= 1 2) \"not this\") "
+                  <> "'((= 1 1) \"this\") "
+                  <> "'(else \"not this either\"))"
+              of
+                  Right (String s) -> s
+                  val              -> show val
+        it "should evaluate else clause if no clause before it evaluates true"
+            $ expect "this"
+            $ case
+                  readEval
+                  $  "(cond '((= 1 2) \"not this\") "
+                  <> "'(else \"this\"))"
+              of
+                  Right (String s) -> s
+                  val              -> show val
+        it "should throw an error, if no clause is true"
+            $ expect True
+            $ case
+                  readEval
+                  $  "(cond '((= 1 2) \"not this\") "
+                  <> "'(#f \"nor this\"))"
+              of
+                  Left (BadSpecialForm "no true condition found" _) -> True
+                  _ -> False

@@ -287,9 +287,14 @@ primitives =
       )
 
     -- List primitives
-    , ("car" , car)
-    , ("cdr" , cdr)
-    , ("cons", cons)
+    , ("car", car)
+    , ("cdr", cdr)
+    , ( "cons"
+      , cons
+      )
+
+    -- Control flow
+    , ("cond", cond)
     ]
 
 numericBinOp
@@ -434,3 +439,14 @@ equal badArgs = throwError $ NumArgs 2 badArgs
 unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
 unpackEquals x y (AnyUnpacker unpacker) =
     liftM2 (==) (unpacker x) (unpacker y) `catchError` (const $ return False)
+
+cond :: [LispVal] -> ThrowsError LispVal
+cond clauses = if null clauses
+    then throwError $ BadSpecialForm "no true condition found" (List clauses)
+    else case head clauses of
+        List [Atom "else", expr] -> eval expr
+        List [test       , expr] -> do
+            case eval test of
+                Right (Bool b) -> if b then eval expr else cond $ tail clauses
+                Right badArg   -> throwError $ TypeMismatch "boolean" badArg
+                err@(Left _)   -> err
