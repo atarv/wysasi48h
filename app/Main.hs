@@ -1,13 +1,14 @@
 module Main where
 
 import Lib
-import System.Environment
-import Control.Monad (liftM)
+import System.Environment ( getArgs )
 
 main :: IO ()
 main = do
-    (expr : _) <- getArgs
-    let initial = readExpr expr 
-    evaluated <- return $ liftM show $ initial >>= eval
-    putStrLn $ "Found value >>> " <> show initial
-    putStrLn $ "Evaluated value >>> " <> (extractValue $ trapError evaluated)
+    args <- getArgs
+    case length args of
+        0 -> runRepl
+        1 -> evalAndPrint $ args !! 0
+        _ -> putStrLn "Program takes only 1 or 0 arguments. If ran sans an \
+            \ argument REPL mode is entered. If an argument is given, it's \
+            \  evaluated and the result is printed."

@@ -1,11 +1,13 @@
 {-# LANGUAGE ExistentialQuantification #-}
 module Lib
-    ( readLispVal
-    , readExpr
+    ( LispError(..)
     , LispVal(..)
-    , LispError(..)
     , eval
+    , evalAndPrint
     , extractValue
+    , readExpr
+    , readLispVal
+    , runRepl
     , trapError
     )
 where
@@ -22,7 +24,9 @@ import           Numeric                        ( readOct
                                                 , readInt
                                                 )
 import qualified Data.Char                     as Char
+import System.IO ( stdout, hFlush )
 
+-- | Lisp's primitive datatypes
 data LispVal = Atom String
              | List [LispVal]
              | DottedList [LispVal] LispVal
@@ -42,6 +46,7 @@ instance Show LispVal where
     show (DottedList head tail) =
         "(" <> unwordsList head <> " . " <> show tail <> ")"
 
+-- | Errors that might happen when parsing and evaluating an expression
 data LispError = NumArgs Integer [LispVal]
                | TypeMismatch String LispVal
                | Parser ParseError
@@ -64,9 +69,13 @@ instance Show LispError where
     show (BadSpecialForm message form   ) = message <> ": " <> show form
     show (NotFunction    message func   ) = message <> ": " <> show func
 
+-- | Shorthand type for error results
 type ThrowsError = Either LispError
 
+-- | Unpacker 'unpacks' a lisp value to Haskell value or throws an error
 data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
+
+-- Parsing --
 
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . fmap show
@@ -140,11 +149,11 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         return $ Number result
 
 parseList :: Parser LispVal
-parseList = List <$> sepBy parseExpr spaces
+parseList = List <$> parseExpr `sepBy` spaces
 
 parseDottedList :: Parser LispVal
 parseDottedList = do
-    head <- endBy parseExpr spaces
+    head <- parseExpr `endBy` spaces
     tail <- char '.' >> spaces >> parseExpr
     return $ DottedList head tail
 
@@ -182,7 +191,7 @@ trapError action = catchError action (return . show)
 extractValue :: Either a b -> b
 extractValue (Right val) = val
 -- (omitted) Left represents programmer error as this should be used only after
--- `catchError`
+-- when argument is known to be Right
 
 parseExpr :: Parser LispVal
 parseExpr =
@@ -209,6 +218,7 @@ readExpr input = case parse parseExpr "lisp" input of
 readLispVal :: String -> Either ParseError LispVal
 readLispVal = parse parseExpr "lisp"
 
+-- | Evaluate a lisp expression
 eval :: LispVal -> ThrowsError LispVal
 eval val@(String    _) = return val
 eval val@(Number    _) = return val
@@ -224,12 +234,16 @@ eval (List [Atom "quote", val]) = return val
 eval (List (Atom func : args)) = mapM eval args >>= apply func
 eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
+-- | Apply arguments to function
 apply :: String -> [LispVal] -> ThrowsError LispVal
 apply func args = maybe
     (throwError $ NotFunction "Unrecognized primitive function args" func)
     ($ args)
     (lookup func primitives)
 
+-- Primitive functions --
+
+-- | Some primitive operations of lisp
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives =
     [
@@ -295,12 +309,15 @@ primitives =
     , ("cond", cond)
     ]
 
+-- | Helper function for making primitive functions that are binary numeric
+-- operators
 numericBinOp
     :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
 numericBinOp _  []            = throwError $ NumArgs 2 []
 numericBinOp _  singleArg@[_] = throwError $ NumArgs 2 singleArg
 numericBinOp op args          = Number . foldl1 op <$> mapM unpackNum args
 
+-- | Helper function for making unary lisp primitives
 unaryOp :: (LispVal -> LispVal) -> [LispVal] -> ThrowsError LispVal
 unaryOp op [x]  = return $ op x
 unaryOp _  args = throwError $ NumArgs 1 args
@@ -445,3 +462,34 @@ cond clauses = if null clauses
             Right (Bool b) -> if b then eval expr else cond $ tail clauses
             Right badArg   -> throwError $ TypeMismatch "boolean" badArg
             err@(Left _)   -> err
+
+-- Read evaluate print loop and IO handling --
+
+-- | Print argument and flush so it's guaranteed that the output shows up
+flushStr :: String -> IO ()
+flushStr str = putStr str >> hFlush stdout
+
+-- | Read user input. Argument is prompt text that shows before user input.
+readPrompt :: String -> IO String
+readPrompt prompt = flushStr prompt >> getLine
+
+-- | Parse and evaluate string as an expression. Errors are trapped to show them
+-- without exiting REPL.
+evalString :: String -> IO String
+evalString expr =
+    return $ extractValue $ trapError (fmap show $ readExpr expr >>= eval)
+
+-- | Evaluate expression (from string) and print it's result
+evalAndPrint :: String -> IO ()
+evalAndPrint expr = evalString expr >>= putStrLn
+
+-- | Repeat action until predicate is satisfied with prompt's result
+until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
+until_ predicate prompt action = do
+    result <- prompt
+    if predicate result
+        then return () -- exit loop
+        else action result >> until_ predicate prompt action
+
+runRepl :: IO ()
+runRepl = until_ (== "quit") (readPrompt "Lisp>>>") evalAndPrint
