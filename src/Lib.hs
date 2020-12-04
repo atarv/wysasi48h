@@ -12,9 +12,7 @@ where
 
 import           Text.ParserCombinators.Parsec
                                          hiding ( spaces )
-import           Control.Monad                  ( liftM
-                                                , liftM2
-                                                )
+import           Control.Monad                  ( liftM2 )
 import           Control.Monad.Except           ( MonadError()
                                                 , throwError
                                                 , catchError
@@ -402,18 +400,16 @@ cons [x1, x2                 ] = return $ DottedList [x1] x2
 cons badArgList                = throwError $ NumArgs 2 badArgList
 
 eqv :: [LispVal] -> ThrowsError LispVal
-eqv [(Bool      a), (Bool b)     ] = return $ Bool $ a == b
-eqv [(Number    a), (Number b)   ] = return $ Bool $ a == b
-eqv [(String    a), (String b)   ] = return $ Bool $ a == b
-eqv [(Character a), (Character b)] = return $ Bool $ a == b
-eqv [(Atom      a), (Atom b)     ] = return $ Bool $ a == b
-eqv [(DottedList xs x), (DottedList ys y)] =
+eqv [Bool      a, Bool b     ] = return $ Bool $ a == b
+eqv [Number    a, Number b   ] = return $ Bool $ a == b
+eqv [String    a, String b   ] = return $ Bool $ a == b
+eqv [Character a, Character b] = return $ Bool $ a == b
+eqv [Atom      a, Atom b     ] = return $ Bool $ a == b
+eqv [DottedList xs x, DottedList ys y] =
     eqv [List $ xs ++ [x], List $ ys ++ [y]]
-eqv [(List xs), (List ys)] =
-    return
-        $  Bool
-        $  (length xs == length ys)
-        && (all (\(Right (Bool b)) -> b) $ zipWith (\x y -> eqv [x, y]) xs ys)
+eqv [List xs, List ys] = return $ Bool $ (length xs == length ys) && all
+    (\(Right (Bool b)) -> b)
+    (zipWith (\x y -> eqv [x, y]) xs ys)
 eqv [_, _]     = return $ Bool False
 eqv badArgList = throwError $ NumArgs 2 badArgList
 
@@ -429,24 +425,23 @@ equal [DottedList xs x, DottedList ys y] = Bool <$> liftM2
     (unLispBool <$> equal [x, y])
     where unLispBool (Bool b) = b
 equal args@[a, b] = do
-    primitiveEquals <- liftM or $ mapM
+    primitiveEquals <- or <$> mapM
         (unpackEquals a b)
         [AnyUnpacker unpackBool, AnyUnpacker unpackNum, AnyUnpacker unpackStr]
     eqvEquals <- eqv args
-    return $ Bool $ (primitiveEquals || let (Bool x) = eqvEquals in x)
+    return $ Bool (primitiveEquals || let (Bool x) = eqvEquals in x)
 equal badArgs = throwError $ NumArgs 2 badArgs
 
 unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
 unpackEquals x y (AnyUnpacker unpacker) =
-    liftM2 (==) (unpacker x) (unpacker y) `catchError` (const $ return False)
+    liftM2 (==) (unpacker x) (unpacker y) `catchError` const (return False)
 
 cond :: [LispVal] -> ThrowsError LispVal
 cond clauses = if null clauses
     then throwError $ BadSpecialForm "no true condition found" (List clauses)
     else case head clauses of
         List [Atom "else", expr] -> eval expr
-        List [test       , expr] -> do
-            case eval test of
-                Right (Bool b) -> if b then eval expr else cond $ tail clauses
-                Right badArg   -> throwError $ TypeMismatch "boolean" badArg
-                err@(Left _)   -> err
+        List [test       , expr] -> case eval test of
+            Right (Bool b) -> if b then eval expr else cond $ tail clauses
+            Right badArg   -> throwError $ TypeMismatch "boolean" badArg
+            err@(Left _)   -> err
