@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE RecordWildCards           #-}
 module Lib
     ( LispError(..)
     , LispVal(..)
@@ -12,6 +13,7 @@ module Lib
     , runOne
     , trapError
     , evalString
+    , primitiveBindings
     )
 where
 
@@ -35,7 +37,9 @@ import           System.IO                      ( stdout
                                                 )
 import           Data.IORef
 import           Data.Functor                   ( (<&>) )
-import           Data.Maybe                     ( isJust )
+import           Data.Maybe                     ( isNothing
+                                                , isJust
+                                                )
 
 -- | Lisp's primitive datatypes
 data LispVal = Atom String
@@ -45,6 +49,12 @@ data LispVal = Atom String
              | String String
              | Bool Bool
              | Character Char
+             | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
+             | Func { params :: [String]
+                    , vararg :: Maybe String
+                    , body :: [LispVal]
+                    , closure :: Env
+                    }
 
 instance Show LispVal where
     show (String    content) = mconcat ["\"", content, "\""]
@@ -56,6 +66,15 @@ instance Show LispVal where
     show (Character c      ) = "#\\" <> [c]
     show (DottedList head tail) =
         "(" <> unwordsList head <> " . " <> show tail <> ")"
+    show (PrimitiveFunc _) = "<primitive>"
+    show Func {..}         = mconcat
+        [ "(lambda ("
+        , unwords $ map show params
+        , case vararg of
+            Nothing  -> ""
+            Just arg -> " . " <> arg
+        , ") ...)"
+        ]
 
 -- | Errors that might happen when parsing and evaluating an expression
 data LispError = NumArgs Integer [LispVal]
@@ -211,6 +230,7 @@ extractValue (Right val) = val
 -- (omitted) Left represents programmer error as this should be used only after
 -- when argument is known to be Right
 
+-- | Parse lisp expression
 parseExpr :: Parser LispVal
 parseExpr =
     parseAtom
@@ -228,11 +248,13 @@ parseExpr =
                 char ')'
                 return x
 
+-- | Read raw lisp expression from string
 readExpr :: String -> ThrowsError LispVal
 readExpr input = case parse parseExpr "lisp" input of
     Left  err -> throwError $ Parser err
     Right val -> return val
 
+-- | Read a lisp value from string
 readLispVal :: String -> Either ParseError LispVal
 readLispVal = parse parseExpr "lisp"
 
@@ -251,21 +273,64 @@ eval env (List [Atom "if", predicate, consequence, alternative]) = do
         badArg     -> throwError $ TypeMismatch "boolean" badArg
 eval env (List (Atom "cond" : clauses)) = cond env clauses
 eval _   (List [Atom "quote", val]    ) = return val
+-- Set variable value
 eval env (List [Atom "set!", Atom var, form]) =
     eval env form >>= setVar env var
+-- Defining a variable
 eval env (List [Atom "define", Atom var, form]) =
     eval env form >>= defineVar env var
-eval env (List (Atom func : args)) =
-    mapM (eval env) args >>= liftThrows . apply func
+-- Defining functions (named)
+eval env (List (Atom "define" : List (Atom var : params) : body)) =
+    makeNormalFunc env params body >>= defineVar env var
+eval env (List (Atom "define" : DottedList (Atom var : params) varargs : body))
+    = makeVarArgs varargs env params body >>= defineVar env var
+-- Defining functions (anonymous)
+eval env (List (Atom "lambda" : List params : body)) =
+    makeNormalFunc env params body
+eval env (List (Atom "lambda" : DottedList params varargs : body)) =
+    makeVarArgs varargs env params body
+eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
+    makeVarArgs varargs env [] body
+-- Function application
+eval env (List (function : args)) = do
+    func    <- eval env function -- function is evaluated
+    argVals <- mapM (eval env) args -- each argument is evaluated
+    apply func argVals -- then arguments are applied to function
+-- Error
 eval _ badForm =
     throwError $ BadSpecialForm "Unrecognized special form" badForm
 
 -- | Apply arguments to function
-apply :: String -> [LispVal] -> ThrowsError LispVal
-apply func args = maybe
-    (throwError $ NotFunction "Unrecognized primitive function args" func)
-    ($ args)
-    (lookup func primitives)
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrimitiveFunc func) args = liftThrows $ func args
+apply Func {..} args = if numberOf params /= numberOf args && isNothing vararg
+    then throwError $ NumArgs (numberOf params) args
+    else
+        liftIO (bindVars closure $ zip params args)
+        >>= bindVarArgs vararg
+        >>= evalBody
+  where
+    -- arguments that haven't been bound
+    remainingArgs = drop (length params) args
+    numberOf      = toInteger . length
+    evalBody env = last <$> mapM (eval env) body
+    bindVarArgs arg env = case arg of
+        Just argName -> liftIO $ bindVars env [(argName, List remainingArgs)]
+        Nothing      -> return env
+
+makeFunc
+    :: (Monad m, Show a) => Maybe String -> Env -> [a] -> [LispVal] -> m LispVal
+makeFunc varargs env params body = return $ Func { body    = body
+                                                 , closure = env
+                                                 , vararg  = varargs
+                                                 , params  = map show params
+                                                 }
+
+makeNormalFunc :: (Monad m, Show a) => Env -> [a] -> [LispVal] -> m LispVal
+makeNormalFunc = makeFunc Nothing
+
+makeVarArgs :: (Monad m, Show a) => a -> Env -> [a] -> [LispVal] -> m LispVal
+makeVarArgs = makeFunc . Just . show
 
 -- Primitive functions --
 
@@ -517,18 +582,24 @@ until_ predicate prompt action = do
 -- | Start REPL
 runRepl :: IO ()
 runRepl = do
-    env <- nullEnv
+    env <- primitiveBindings
     until_ (== "quit") (readPrompt "Lisp>>>") (evalAndPrint env)
 
--- | Evaluate and print one expression in a null environment
+-- | Evaluate and print one expression
 runOne :: String -> IO ()
 runOne expr = do
-    env <- nullEnv
+    env <- primitiveBindings
     evalAndPrint env expr
 
 -- | Initialize empty environment
 nullEnv :: IO Env
 nullEnv = newIORef []
+
+-- | Initialize environment with primitive functions bound
+primitiveBindings :: IO Env
+primitiveBindings = nullEnv
+    >>= flip bindVars (map makePrimitiveFunc primitives)
+    where makePrimitiveFunc = fmap PrimitiveFunc
 
 liftThrows :: ThrowsError a -> IOThrowsError a
 liftThrows (Left  err) = throwError err

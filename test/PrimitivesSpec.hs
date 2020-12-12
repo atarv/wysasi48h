@@ -3,15 +3,11 @@ module PrimitivesSpec where
 import           Lib
 import           Test.Hspec
 import           TestHelpers                    ( expect )
-import           Data.IORef
-
-testEnv :: IO Env
-testEnv = newIORef []
 
 -- Shorthand for reading and evaluating expressions
 readEval :: String -> IO String
 readEval expr = do
-    env <- testEnv
+    env <- primitiveBindings
     evalString env expr
 
 primitivesSpec = parallel $ do
@@ -131,3 +127,10 @@ primitivesSpec = parallel $ do
         it "should throw an error, if no clause is true"
             $   readEval "(cond ((= 1 2) \"not this\") (#f \"nor this\"))"
             >>= expect "no true condition found: ()" -- TODO: this is suboptimal
+    describe "lambda function" $ do
+        it "should be printed showing arguments"
+            $   readEval "(lambda (x y) (x y))"
+            >>= expect "(lambda (\"x\" \"y\") ...)"
+        it "should be evaluated when arguments are applied"
+            $   readEval "((lambda (x y) (+ x y)) 10 20)"
+            >>= expect "30"
