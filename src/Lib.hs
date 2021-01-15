@@ -50,9 +50,9 @@ data LispVal = Atom String
              | Bool Bool
              | Character Char
              | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
-             | Func { params :: [String]
-                    , vararg :: Maybe String
-                    , body :: [LispVal]
+             | Func { params  :: [String]
+                    , vararg  :: Maybe String
+                    , body    :: [LispVal]
                     , closure :: Env
                     }
              | IOFunc ([LispVal] -> IOThrowsError LispVal)
@@ -178,7 +178,9 @@ parseNumber = base10 <|> base10Explicit <|> binary <|> octal <|> hexadecimal
         octalDigits <- many1 octDigit
         let [(result, _)] = readOct octalDigits
         return $ Number result
-    base10         = Number . read <$> many1 digit
+    base10 = do
+        sign <- option ' ' $ char '-'
+        Number . read . (sign :) <$> many1 digit
     base10Explicit = do
         try $ string "#d"
         base10
@@ -237,9 +239,9 @@ extractValue (Right val) = val
 -- | Parse lisp expression
 parseExpr :: Parser LispVal
 parseExpr =
-    parseAtom
+    try parseNumber
+        <|> parseAtom
         <|> parseString
-        <|> parseNumber
         <|> parseCharacter
         <|> parseQuoted
         <|> parseBool
