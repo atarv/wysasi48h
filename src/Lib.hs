@@ -32,14 +32,14 @@ import           Numeric                        ( readOct
                                                 , readInt
                                                 )
 import qualified Data.Char                     as Char
-import           System.IO                      ( stdout
-                                                , hFlush
-                                                )
+import           System.IO
 import           Data.IORef
 import           Data.Functor                   ( (<&>) )
 import           Data.Maybe                     ( isNothing
                                                 , isJust
                                                 )
+import           Data.List.NonEmpty             ( NonEmpty )
+import qualified Data.List.NonEmpty            as NonEmpty
 
 -- | Lisp's primitive datatypes
 data LispVal = Atom String
@@ -55,6 +55,8 @@ data LispVal = Atom String
                     , body :: [LispVal]
                     , closure :: Env
                     }
+             | IOFunc ([LispVal] -> IOThrowsError LispVal)
+             | Port Handle
 
 instance Show LispVal where
     show (String    content) = mconcat ["\"", content, "\""]
@@ -75,6 +77,8 @@ instance Show LispVal where
             Just arg -> " . " <> arg
         , ") ...)"
         ]
+    show (IOFunc _) = "<IO primitive>"
+    show (Port   _) = "<IO port>"
 
 -- | Errors that might happen when parsing and evaluating an expression
 data LispError = NumArgs Integer [LispVal]
@@ -248,11 +252,19 @@ parseExpr =
                 char ')'
                 return x
 
+-- | Try to parse string with given parser throwing an error if it's not 
+-- successful
+readOrThrow :: Parser a -> String -> ThrowsError a
+readOrThrow parser input =
+    either (throwError . Parser) return $ parse parser "lisp" input
+
 -- | Read raw lisp expression from string
 readExpr :: String -> ThrowsError LispVal
-readExpr input = case parse parseExpr "lisp" input of
-    Left  err -> throwError $ Parser err
-    Right val -> return val
+readExpr = readOrThrow parseExpr
+
+-- | Read multiple expressions separated by whitespace
+readExprList :: String -> ThrowsError [LispVal]
+readExprList = readOrThrow (endBy parseExpr $ optional spaces)
 
 -- | Read a lisp value from string
 readLispVal :: String -> Either ParseError LispVal
@@ -291,6 +303,11 @@ eval env (List (Atom "lambda" : DottedList params varargs : body)) =
     makeVarArgs varargs env params body
 eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
     makeVarArgs varargs env [] body
+-- Load a Scheme file executing it
+eval env (List [Atom "load", String path]) = do
+    contents <- load path
+    -- return the result of last expression in file
+    last <$> mapM (eval env) contents
 -- Function application
 eval env (List (function : args)) = do
     func    <- eval env function -- function is evaluated
@@ -303,6 +320,7 @@ eval _ badForm =
 -- | Apply arguments to function
 apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
 apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (IOFunc func) args = func args
 apply Func {..} args = if numberOf params /= numberOf args && isNothing vararg
     then throwError $ NumArgs (numberOf params) args
     else
@@ -325,6 +343,11 @@ makeFunc varargs env params body = return $ Func { body    = body
                                                  , vararg  = varargs
                                                  , params  = map show params
                                                  }
+
+-- | Wrapper for `apply` that takes a list of lisp values
+applyProc :: [LispVal] -> IOThrowsError LispVal
+applyProc [func, List args] = apply func args
+applyProc (func : args)     = apply func args
 
 makeNormalFunc :: (Monad m, Show a) => Env -> [a] -> [LispVal] -> m LispVal
 makeNormalFunc = makeFunc Nothing
@@ -585,11 +608,17 @@ runRepl = do
     env <- primitiveBindings
     until_ (== "quit") (readPrompt "Lisp>>>") (evalAndPrint env)
 
--- | Evaluate and print one expression
-runOne :: String -> IO ()
-runOne expr = do
+-- | Evaluate a file and print the result of last expression
+runOne :: NonEmpty String -> IO ()
+runOne args = do
+    -- Bind primitives and program's arguments
     env <- primitiveBindings
-    evalAndPrint env expr
+        >>= flip bindVars [("args", List $ map String $ NonEmpty.tail args)]
+    -- Run given file
+    result <- runIOThrows $ show <$> eval
+        env
+        (List [Atom "load", String $ NonEmpty.head args])
+    hPutStrLn stderr result
 
 -- | Initialize empty environment
 nullEnv :: IO Env
@@ -597,9 +626,16 @@ nullEnv = newIORef []
 
 -- | Initialize environment with primitive functions bound
 primitiveBindings :: IO Env
-primitiveBindings = nullEnv
-    >>= flip bindVars (map makePrimitiveFunc primitives)
-    where makePrimitiveFunc = fmap PrimitiveFunc
+primitiveBindings = do
+    env <- nullEnv
+    env
+        `bindVars` (  map makePrimitiveFunc primitives
+                   ++ map makeIOPrimitive   ioPrimitives
+                   )
+  where
+    makePrimitiveFunc = fmap PrimitiveFunc
+    makeIOPrimitive   = fmap IOFunc
+
 
 liftThrows :: ThrowsError a -> IOThrowsError a
 liftThrows (Left  err) = throwError err
@@ -653,3 +689,52 @@ bindVars envRef bindings = readIORef envRef >>= extendEnv bindings >>= newIORef
     addBinding (var, value) = do
         ref <- newIORef value
         return (var, ref)
+
+-- | Primitive functions for handling IO in lisp
+ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives =
+    [ ("apply"            , applyProc)
+    , ("open-input-file"  , makePort ReadMode)
+    , ("open-output-file" , makePort WriteMode)
+    , ("close-input-port" , closePort)
+    , ("close-output-port", closePort)
+    , ("read"             , readProc)
+    , ("write"            , writeProc)
+    , ("read-contents"    , readContents)
+    , ("read-all"         , readAll)
+    ]
+
+-- | Open a file handle/port in given IO mode
+makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+makePort mode [String path] = fmap Port $ liftIO $ openFile path mode
+
+-- | Close file handle/port returning port was closed
+closePort :: [LispVal] -> IOThrowsError LispVal
+closePort [Port port] = liftIO $ hClose port >> return (Bool True)
+closePort _           = return $ Bool False
+
+-- | Read a lisp value (in single line) from port
+readProc :: [LispVal] -> IOThrowsError LispVal
+readProc []          = readProc [Port stdin]
+readProc [Port port] = do
+    line <- liftIO $ hGetLine port
+    liftThrows $ readExpr line
+
+-- | Write a lisp value to port
+writeProc :: [LispVal] -> IOThrowsError LispVal
+writeProc [obj]            = writeProc [obj, Port stdout]
+writeProc [obj, Port port] = liftIO $ hPrint port obj >> return (Bool True)
+
+-- | Read file contents to a string
+readContents :: [LispVal] -> IOThrowsError LispVal
+readContents [String path] = fmap String $ liftIO $ readFile path
+
+-- | Load a Scheme file and return expressions as a lisp list
+readAll :: [LispVal] -> IOThrowsError LispVal
+readAll [String path] = List <$> load path
+
+-- | Load a scheme file
+load :: String -> IOThrowsError [LispVal]
+load path = do
+    contents <- liftIO $ readFile path
+    liftThrows $ readExprList contents
