@@ -80,6 +80,15 @@ instance Show LispVal where
     show (IOFunc _) = "<IO primitive>"
     show (Port   _) = "<IO port>"
 
+class Show a => Display a where
+    -- | Display value in human readable form. (Otherwise the same as show, but 
+    -- strings are printed without quotes)
+    display :: a -> String
+
+instance Display LispVal where
+    display (String str) = str
+    display obj          = show obj
+
 -- | Errors that might happen when parsing and evaluating an expression
 data LispError = NumArgs Integer [LispVal]
                | TypeMismatch String LispVal
@@ -238,7 +247,8 @@ extractValue (Right val) = val
 
 -- | Parse lisp expression
 parseExpr :: Parser LispVal
-parseExpr =
+parseExpr = do
+    optional spaces
     try parseNumber
         <|> parseAtom
         <|> parseString
@@ -702,8 +712,11 @@ ioPrimitives =
     , ("close-output-port", closePort)
     , ("read"             , readProc)
     , ("write"            , writeProc)
+    , ("display"          , displayProc)
+    , ("displayln"        , displaylnProc)
     , ("read-contents"    , readContents)
     , ("read-all"         , readAll)
+    , ("newline"          , newlineProc)
     ]
 
 -- | Open a file handle/port in given IO mode
@@ -727,6 +740,20 @@ writeProc :: [LispVal] -> IOThrowsError LispVal
 writeProc [obj]            = writeProc [obj, Port stdout]
 writeProc [obj, Port port] = liftIO $ hPrint port obj >> return (Bool True)
 
+-- | Write in human readable format
+displayProc :: [LispVal] -> IOThrowsError LispVal
+displayProc [obj]            = displayProc [obj, Port stdout]
+displayProc [obj, Port port] = do
+    liftIO $ hPutStr port $ display obj
+    return (Bool True)
+
+-- | Write in human readable format with a newline at the end.
+displaylnProc :: [LispVal] -> IOThrowsError LispVal
+displaylnProc [obj]            = displaylnProc [obj, Port stdout]
+displaylnProc [obj, Port port] = do
+    liftIO $ hPutStr port $ display obj <> "\n"
+    return (Bool True)
+
 -- | Read file contents to a string
 readContents :: [LispVal] -> IOThrowsError LispVal
 readContents [String path] = fmap String $ liftIO $ readFile path
@@ -734,6 +761,11 @@ readContents [String path] = fmap String $ liftIO $ readFile path
 -- | Load a Scheme file and return expressions as a lisp list
 readAll :: [LispVal] -> IOThrowsError LispVal
 readAll [String path] = List <$> load path
+
+-- | Print a newline
+newlineProc :: [LispVal] -> IOThrowsError LispVal
+newlineProc []              = newlineProc [Port stdout]
+newlineProc [port@(Port _)] = displaylnProc [String "", port]
 
 -- | Load a scheme file
 load :: String -> IOThrowsError [LispVal]
