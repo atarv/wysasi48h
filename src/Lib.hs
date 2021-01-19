@@ -80,14 +80,11 @@ instance Show LispVal where
     show (IOFunc _) = "<IO primitive>"
     show (Port   _) = "<IO port>"
 
-class Show a => Display a where
-    -- | Display value in human readable form. (Otherwise the same as show, but 
-    -- strings are printed without quotes)
-    display :: a -> String
-
-instance Display LispVal where
-    display (String str) = str
-    display obj          = show obj
+-- | Display value in human readable form. (Otherwise the same as show, but 
+-- strings are printed without quotes)
+display :: LispVal -> String
+display (String str) = str
+display obj          = show obj
 
 -- | Errors that might happen when parsing and evaluating an expression
 data LispError = NumArgs Integer [LispVal]
@@ -157,10 +154,14 @@ parseCharacter = do
         x <- anyChar
         notFollowedBy alphaNum
         return [x]
-    return $ Character $ case map Char.toLower value of
-        "space"   -> ' '
-        "newline" -> '\n'
-        [x]       -> x
+    case map Char.toLower value of
+        "space"   -> return . Character $ ' '
+        "newline" -> return . Character $ '\n'
+        [x]       -> return . Character $ x
+        _ ->
+            fail
+                "Failed to parse character. This shouldn't happen since the\
+                \ parser can't return any other values than matched here."
 
 parseAtom :: Parser LispVal
 parseAtom = do
@@ -242,8 +243,9 @@ trapError action = catchError action (return . show)
 
 extractValue :: Either a b -> b
 extractValue (Right val) = val
--- (omitted) Left represents programmer error as this should be used only after
--- when argument is known to be Right
+-- Left represents programmer error as this should be used only after when 
+-- argument is known to be Right
+extractValue (Left  _  ) = undefined
 
 -- | Parse lisp expression
 parseExpr :: Parser LispVal
@@ -347,6 +349,8 @@ apply Func {..} args = if numberOf params /= numberOf args && isNothing vararg
     bindVarArgs arg env = case arg of
         Just argName -> liftIO $ bindVars env [(argName, List remainingArgs)]
         Nothing      -> return env
+apply f _ =
+    liftThrows . throwError . NotFunction "object is not applicable" $ show f
 
 makeFunc
     :: (Monad m, Show a) => Maybe String -> Env -> [a] -> [LispVal] -> m LispVal
@@ -360,6 +364,8 @@ makeFunc varargs env params body = return $ Func { body    = body
 applyProc :: [LispVal] -> IOThrowsError LispVal
 applyProc [func, List args] = apply func args
 applyProc (func : args)     = apply func args
+applyProc f =
+    liftThrows . throwError . NotFunction "object is not applicable" $ show f
 
 makeNormalFunc :: (Monad m, Show a) => Env -> [a] -> [LispVal] -> m LispVal
 makeNormalFunc = makeFunc Nothing
@@ -584,6 +590,8 @@ cond env clauses = if null clauses
             case result of
                 Bool b -> if b then eval env expr else cond env $ tail clauses
                 badArg -> throwError $ TypeMismatch "boolean" badArg
+        badClause ->
+            throwError $ TypeMismatch "object evaluating to boolean" badClause
 
 -- Read-evaluate-print-loop and IO handling --
 
@@ -721,9 +729,10 @@ ioPrimitives =
 
 -- | Open a file handle/port in given IO mode
 makePort :: IOMode -> [LispVal] -> IOThrowsError LispVal
-makePort mode [String path] = fmap Port $ liftIO $ openFile path mode
+makePort mode  [String path] = fmap Port $ liftIO $ openFile path mode
+makePort _mode args          = liftThrows . throwError $ NumArgs 1 args
 
--- | Close file handle/port returning port was closed
+-- | Close file handle/port returning whether port was closed
 closePort :: [LispVal] -> IOThrowsError LispVal
 closePort [Port port] = liftIO $ hClose port >> return (Bool True)
 closePort _           = return $ Bool False
@@ -734,11 +743,13 @@ readProc []          = readProc [Port stdin]
 readProc [Port port] = do
     line <- liftIO $ hGetLine port
     liftThrows $ readExpr line
+readProc args = liftThrows . throwError $ NumArgs 1 args
 
 -- | Write a lisp value to port
 writeProc :: [LispVal] -> IOThrowsError LispVal
 writeProc [obj]            = writeProc [obj, Port stdout]
 writeProc [obj, Port port] = liftIO $ hPrint port obj >> return (Bool True)
+writeProc args             = liftThrows . throwError $ NumArgs 2 args
 
 -- | Write in human readable format
 displayProc :: [LispVal] -> IOThrowsError LispVal
@@ -746,6 +757,7 @@ displayProc [obj]            = displayProc [obj, Port stdout]
 displayProc [obj, Port port] = do
     liftIO $ hPutStr port $ display obj
     return (Bool True)
+displayProc args = liftThrows . throwError $ NumArgs 2 args
 
 -- | Write in human readable format with a newline at the end.
 displaylnProc :: [LispVal] -> IOThrowsError LispVal
@@ -753,19 +765,23 @@ displaylnProc [obj]            = displaylnProc [obj, Port stdout]
 displaylnProc [obj, Port port] = do
     liftIO $ hPutStr port $ display obj <> "\n"
     return (Bool True)
+displaylnProc args = liftThrows . throwError $ NumArgs 2 args
 
 -- | Read file contents to a string
 readContents :: [LispVal] -> IOThrowsError LispVal
 readContents [String path] = fmap String $ liftIO $ readFile path
+readContents args          = liftThrows . throwError $ NumArgs 1 args
 
 -- | Load a Scheme file and return expressions as a lisp list
 readAll :: [LispVal] -> IOThrowsError LispVal
 readAll [String path] = List <$> load path
+readAll args          = liftThrows . throwError $ NumArgs 1 args
 
 -- | Print a newline
 newlineProc :: [LispVal] -> IOThrowsError LispVal
 newlineProc []              = newlineProc [Port stdout]
 newlineProc [port@(Port _)] = displaylnProc [String "", port]
+newlineProc args            = liftThrows . throwError $ NumArgs 1 args
 
 -- | Load a scheme file
 load :: String -> IOThrowsError [LispVal]

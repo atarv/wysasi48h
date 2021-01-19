@@ -10,6 +10,8 @@
 
 (define (id obj) obj)
 
+(define (const val obj) val)
+
 (define (flip func)
     (lambda (arg1 arg2) (func arg2 arg1)))
 
@@ -52,7 +54,7 @@
 
 (define (range start stop)
     (if (< start stop)
-        (unfold (curry + 1) start (curry < stop))
+        (unfold (curry + 1) start (curry <= stop))
         (unfold (curry (flip -) 1) start (curry >= stop))))
 
 (define (sum . lst)
